@@ -23,7 +23,6 @@ from ..utils.audio import (
     ResponseFormat,
     tensor_to_pcm16_bytes,
     tensors_to_formatted_bytes,
-    tensors_to_wav_bytes,
 )
 from ..utils.instruction_validation import (
     InstructionValidationError,
@@ -95,6 +94,19 @@ def _get_cfg(request: Request):
 
 def _effective_timeout_s(request_timeout_s: int | None, cfg) -> int:
     return request_timeout_s or cfg.request_timeout_s
+
+
+def _pcm_stream_response(stream_iter: AsyncIterator[bytes]) -> StreamingResponse:
+    return StreamingResponse(
+        stream_iter,
+        media_type="audio/pcm",
+        headers={
+            "X-Audio-Sample-Rate": "24000",
+            "X-Audio-Channels": "1",
+            "X-Audio-Bit-Depth": "16",
+            "X-Audio-Format": "pcm-int16-le",
+        },
+    )
 
 
 def _resolve_synthesis_mode(
@@ -300,16 +312,7 @@ async def create_speech(
             if cfg.stream_overlap
             else _stream_sentences(body.input, req, inference_svc, metrics_svc, cfg)
         )
-        return StreamingResponse(
-            stream_iter,
-            media_type="audio/pcm",
-            headers={
-                "X-Audio-Sample-Rate": "24000",
-                "X-Audio-Channels": "1",
-                "X-Audio-Bit-Depth": "16",
-                "X-Audio-Format": "pcm-int16-le",
-            },
-        )
+        return _pcm_stream_response(stream_iter)
 
     timeout_s = _effective_timeout_s(body.request_timeout_s, cfg)
 
@@ -476,6 +479,8 @@ async def create_speech_clone(
     text: str = Form(..., min_length=1, max_length=10_000),
     ref_audio: UploadFile = File(...),
     ref_text: str | None = Form(default=None),
+    response_format: ResponseFormat = Form(default="wav"),
+    stream: bool = Form(default=False),
     speed: float = Form(default=1.0, ge=0.25, le=4.0),
     num_step: int | None = Form(default=None, ge=1, le=64),
     guidance_scale: float | None = Form(default=None, ge=0.0, le=10.0),
@@ -529,11 +534,8 @@ async def create_speech_clone(
             detail=str(e),
         )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = str(Path(tmpdir) / "ref_audio.wav")
-        Path(tmp_path).write_bytes(audio_bytes)
-
-        req = SynthesisRequest(
+    def build_request(tmp_path: str) -> SynthesisRequest:
+        return SynthesisRequest(
             text=text,
             mode="clone",
             ref_audio_path=tmp_path,
@@ -553,6 +555,35 @@ async def create_speech_clone(
             audio_chunk_duration=audio_chunk_duration,
             audio_chunk_threshold=audio_chunk_threshold,
         )
+
+    if stream or cfg.stream:
+        if response_format != "pcm":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Streaming only supports response_format='pcm', got '{response_format}'"
+                ),
+            )
+
+        async def clone_stream() -> AsyncIterator[bytes]:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = str(Path(tmpdir) / "ref_audio.wav")
+                Path(tmp_path).write_bytes(audio_bytes)
+                req = build_request(tmp_path)
+                stream_iter = (
+                    _stream_sentences_overlapped(text, req, inference_svc, metrics_svc, cfg)
+                    if cfg.stream_overlap
+                    else _stream_sentences(text, req, inference_svc, metrics_svc, cfg)
+                )
+                async for chunk in stream_iter:
+                    yield chunk
+
+        return _pcm_stream_response(clone_stream())
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = str(Path(tmpdir) / "ref_audio.wav")
+        Path(tmp_path).write_bytes(audio_bytes)
+        req = build_request(tmp_path)
         timeout_s = _effective_timeout_s(request_timeout_s, cfg)
 
         try:
@@ -575,9 +606,18 @@ async def create_speech_clone(
                 detail=f"Synthesis failed: {e}",
             )
 
+        try:
+            audio_output, media_type = tensors_to_formatted_bytes(result.tensors, response_format)
+        except RuntimeError as e:
+            logger.warning(f"Format conversion failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=f"Audio format '{response_format}' not available: {e}",
+            )
+
         return Response(
-            content=tensors_to_wav_bytes(result.tensors),
-            media_type="audio/wav",
+            content=audio_output,
+            media_type=media_type,
             headers={
                 "X-Audio-Duration-S": str(round(result.duration_s, 3)),
                 "X-Synthesis-Latency-S": str(round(result.latency_s, 3)),
