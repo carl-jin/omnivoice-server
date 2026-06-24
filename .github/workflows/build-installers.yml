@@ -55,8 +55,15 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Upgrade pip
         run: python -m pip install --upgrade pip wheel
+      - name: Cache HuggingFace model
+        uses: actions/cache@v4
+        with:
+          path: ~\.cache\huggingface
+          key: hf-omnivoice-${{ matrix.variant }}
       - name: Build installer (${{ matrix.variant }})
         shell: pwsh
+        env:
+          OMNIVOICE_SMOKE_TEST: "1"
         run: .\packaging\build_windows.ps1 -Variant ${{ matrix.variant }}
       - uses: actions/upload-artifact@v4
         with:
