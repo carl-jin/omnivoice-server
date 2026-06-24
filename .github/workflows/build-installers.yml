@@ -1,0 +1,65 @@
+name: build-installers
+
+# Builds the standalone desktop installers:
+#   - macOS (Apple Silicon, CPU)   -> .dmg
+#   - Windows CPU                  -> setup .exe
+#   - Windows CUDA (cu128)         -> setup .exe
+#
+# The ~3GB TTS model is NOT bundled; it is downloaded on first run.
+# Trigger manually, or on a version tag.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS arm64 (dmg)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install torch==2.8.0 torchaudio==2.8.0
+          pip install . "pyinstaller>=6.0"
+      - name: Build dmg
+        run: bash packaging/build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omnivoice-server-macos-arm64-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows ${{ matrix.variant }} (exe)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cpu, cuda]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip wheel
+      - name: Build installer (${{ matrix.variant }})
+        shell: pwsh
+        run: .\packaging\build_windows.ps1 -Variant ${{ matrix.variant }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omnivoice-server-windows-${{ matrix.variant }}-setup
+          path: dist/*setup.exe
+          if-no-files-found: error
