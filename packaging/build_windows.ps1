@@ -23,9 +23,9 @@ Set-Location $Repo
 
 Write-Host "==> Installing torch ($Variant)"
 if ($Variant -eq "cuda") {
-    pip install "torch==2.8.0" "torchaudio==2.8.0" --index-url https://download.pytorch.org/whl/cu128
+    pip install "torch==2.8.0" "torchaudio==2.8.0" --index-url https://download.pytorch.org/whl/cu128 --force
 } else {
-    pip install "torch==2.8.0" "torchaudio==2.8.0" --index-url https://download.pytorch.org/whl/cpu
+    pip install "torch==2.8.0" "torchaudio==2.8.0" --index-url https://download.pytorch.org/whl/cpu --force
 }
 
 Write-Host "==> Installing project + PyInstaller"
