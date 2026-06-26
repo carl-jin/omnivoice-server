@@ -59,6 +59,17 @@ class ModelService:
                     self.cfg.model_id,
                     **from_pretrained_kwargs,
                 )
+                
+                # Explicitly move model and tokenizer to target device.
+                # This ensures custom non-LLM components (embeddings, heads)
+                # and the audio tokenizer are correctly placed on the GPU/MPS.
+                device = self.cfg.device
+                model.to(device)
+                if hasattr(model, "audio_tokenizer") and model.audio_tokenizer is not None:
+                    # Higgs-audio-v2-tokenizer does not support MPS, keep on CPU for MPS
+                    tokenizer_device = "cpu" if device == "mps" else device
+                    model.audio_tokenizer.to(tokenizer_device)
+
                 test = model.generate(text="test", num_step=4)
                 if self._has_nan(test):
                     logger.warning(f"dtype={dtype} produced NaN, trying next...")

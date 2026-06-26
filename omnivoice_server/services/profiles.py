@@ -94,7 +94,8 @@ class ProfileService:
             "created_at": now,
         }
         (profile_path / PROFILE_META_FILE).write_text(
-            json.dumps(meta, ensure_ascii=False, indent=2)
+            json.dumps(meta, ensure_ascii=False, indent=2),
+            encoding='utf-8'
         )
 
         logger.info(f"Saved profile '{profile_id}'")
@@ -119,6 +120,6 @@ class ProfileService:
         if not meta_file.exists():
             return None
         try:
-            return json.loads(meta_file.read_text())
+            return json.loads(meta_file.read_text(encoding='utf-8'))
         except (json.JSONDecodeError, OSError):
             return None
