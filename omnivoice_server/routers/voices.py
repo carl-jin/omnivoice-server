@@ -130,6 +130,25 @@ async def create_profile(
             detail=str(e),
         )
 
+    if not ref_text or not ref_text.strip():
+        try:
+            import asyncio
+            model = request.app.state.model_svc.model
+            audio_path = profile_svc.get_ref_audio_path(profile_id)
+            
+            # Run blocking transcribe in a thread pool to avoid blocking the event loop
+            transcribed_text = await asyncio.to_thread(model.transcribe, str(audio_path))
+            
+            # Save again with the transcribed text
+            meta = profile_svc.save_profile(
+                profile_id=profile_id,
+                audio_bytes=audio_bytes,
+                ref_text=transcribed_text,
+                overwrite=True,
+            )
+        except Exception as e:
+            logger.warning(f"Auto-transcription failed for profile {profile_id}: {e}")
+
     return meta
 
 
@@ -217,6 +236,21 @@ async def update_profile(
             ref_text=ref_text,
             overwrite=True,
         )
+
+        if not ref_text or not ref_text.strip():
+            try:
+                import asyncio
+                model = request.app.state.model_svc.model
+                audio_path = profile_svc.get_ref_audio_path(profile_id)
+                transcribed_text = await asyncio.to_thread(model.transcribe, str(audio_path))
+                meta = profile_svc.save_profile(
+                    profile_id=profile_id,
+                    audio_bytes=audio_bytes,
+                    ref_text=transcribed_text,
+                    overwrite=True,
+                )
+            except Exception as e:
+                logger.warning(f"Auto-transcription failed for profile {profile_id}: {e}")
     else:
         # Only updating ref_text — keep existing audio
         audio_bytes = existing_path.read_bytes()
