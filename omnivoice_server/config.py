@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         default=None,
         description="Override HuggingFace model cache directory",
     )
-    device: Literal["auto", "cuda", "mps", "cpu"] = "cpu"
+    device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
     num_step: int = Field(default=32, ge=1, le=64)  # Upstream default
 
     # Advanced generation params (passed through to OmniVoice.generate())
